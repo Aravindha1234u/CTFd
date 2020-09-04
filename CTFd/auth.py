@@ -186,7 +186,7 @@ def reset_password(data=None):
 @check_registration_visibility
 @ratelimit(method="POST", limit=10, interval=5)
 def register():
-    return redirect("https://discord.com/api/oauth2/authorize?client_id=704010814356455508&redirect_uri=http%3A%2F%2F127.0.0.1%3A8000%2Fcallback&response_type=code&scope=identify%20email")
+    return redirect("https://discord.com/api/oauth2/authorize?client_id=704010814356455508&redirect_uri=https%3A%2F%2Fplayground.secarmy.org%2Fcallback&response_type=code&scope=identify%20email")
     errors = get_errors()
     if request.method == "POST":
         name = request.form.get("name", "").strip()
@@ -385,7 +385,7 @@ def make_session(token=None, state=None, scope=None):
         token=token,
         state=state,
         scope=scope,
-        redirect_uri="http://127.0.0.1:8000/callback",
+        redirect_uri="https://playground.secarmy.org/callback",
         auto_refresh_kwargs={
             'client_id': 704010814356455508,
             'client_secret': "kHLKALybV7qJmlYCsvAr5URdFl1jh4F2",
