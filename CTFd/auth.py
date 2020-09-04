@@ -1,4 +1,6 @@
 import base64
+from requests_oauthlib import OAuth2Session
+import os
 
 import requests
 from flask import Blueprint
@@ -184,6 +186,7 @@ def reset_password(data=None):
 @check_registration_visibility
 @ratelimit(method="POST", limit=10, interval=5)
 def register():
+    return redirect("https://discord.com/api/oauth2/authorize?client_id=704010814356455508&redirect_uri=http%3A%2F%2F127.0.0.1%3A8000%2Fcallback&response_type=code&scope=identify%20email")
     errors = get_errors()
     if request.method == "POST":
         name = request.form.get("name", "").strip()
@@ -307,6 +310,7 @@ def register():
 @auth.route("/login", methods=["POST", "GET"])
 @ratelimit(method="POST", limit=10, interval=5)
 def login():
+
     errors = get_errors()
     if request.method == "POST":
         name = request.form["name"]
@@ -347,7 +351,6 @@ def login():
         db.session.close()
         return render_template("login.html", errors=errors)
 
-
 @auth.route("/oauth")
 def oauth_login():
     endpoint = (
@@ -376,119 +379,53 @@ def oauth_login():
     )
     return redirect(redirect_url)
 
+def make_session(token=None, state=None, scope=None):
+    return OAuth2Session(
+        client_id=704010814356455508,
+        token=token,
+        state=state,
+        scope=scope,
+        redirect_uri="http://127.0.0.1:8000/callback",
+        auto_refresh_kwargs={
+            'client_id': 704010814356455508,
+            'client_secret': "kHLKALybV7qJmlYCsvAr5URdFl1jh4F2",
+        },
+        auto_refresh_url="https://discordapp.com/api/oauth2/token",
+        )
 
-@auth.route("/redirect", methods=["GET"])
+@auth.route("/callback", methods=["GET"])
 @ratelimit(method="GET", limit=10, interval=60)
 def oauth_redirect():
-    oauth_code = request.args.get("code")
-    state = request.args.get("state")
-    if session["nonce"] != state:
-        log("logins", "[{date}] {ip} - OAuth State validation mismatch")
-        error_for(endpoint="auth.login", message="OAuth State validation mismatch.")
-        return redirect(url_for("auth.login"))
-
-    if oauth_code:
-        url = (
-            get_app_config("OAUTH_TOKEN_ENDPOINT")
-            or get_config("oauth_token_endpoint")
-            or "https://auth.majorleaguecyber.org/oauth/token"
-        )
-
-        client_id = get_app_config("OAUTH_CLIENT_ID") or get_config("oauth_client_id")
-        client_secret = get_app_config("OAUTH_CLIENT_SECRET") or get_config(
-            "oauth_client_secret"
-        )
-        headers = {"content-type": "application/x-www-form-urlencoded"}
-        data = {
-            "code": oauth_code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "grant_type": "authorization_code",
-        }
-        token_request = requests.post(url, data=data, headers=headers)
-
-        if token_request.status_code == requests.codes.ok:
-            token = token_request.json()["access_token"]
-            user_url = (
-                get_app_config("OAUTH_API_ENDPOINT")
-                or get_config("oauth_api_endpoint")
-                or "https://api.majorleaguecyber.org/user"
-            )
-
-            headers = {
-                "Authorization": "Bearer " + str(token),
-                "Content-type": "application/json",
-            }
-            api_data = requests.get(url=user_url, headers=headers).json()
-
-            user_id = api_data["id"]
-            user_name = api_data["name"]
-            user_email = api_data["email"]
-
-            user = Users.query.filter_by(email=user_email).first()
-            if user is None:
-                # Check if we are allowing registration before creating users
-                if registration_visible() or mlc_registration():
-                    user = Users(
-                        name=user_name,
-                        email=user_email,
-                        oauth_id=user_id,
-                        verified=True,
-                    )
-                    db.session.add(user)
-                    db.session.commit()
-                else:
-                    log("logins", "[{date}] {ip} - Public registration via MLC blocked")
-                    error_for(
-                        endpoint="auth.login",
-                        message="Public registration is disabled. Please try again later.",
-                    )
-                    return redirect(url_for("auth.login"))
-
-            if get_config("user_mode") == TEAMS_MODE:
-                team_id = api_data["team"]["id"]
-                team_name = api_data["team"]["name"]
-
-                team = Teams.query.filter_by(oauth_id=team_id).first()
-                if team is None:
-                    team = Teams(name=team_name, oauth_id=team_id, captain_id=user.id)
-                    db.session.add(team)
-                    db.session.commit()
-                    clear_team_session(team_id=team.id)
-
-                team_size_limit = get_config("team_size", default=0)
-                if team_size_limit and len(team.members) >= team_size_limit:
-                    plural = "" if team_size_limit == 1 else "s"
-                    size_error = "Teams are limited to {limit} member{plural}.".format(
-                        limit=team_size_limit, plural=plural
-                    )
-                    error_for(endpoint="auth.login", message=size_error)
-                    return redirect(url_for("auth.login"))
-
-                team.members.append(user)
-                db.session.commit()
-
-            if user.oauth_id is None:
-                user.oauth_id = user_id
-                user.verified = True
-                db.session.commit()
-                clear_user_session(user_id=user.id)
-
-            login_user(user)
-
-            return redirect(url_for("challenges.listing"))
-        else:
-            log("logins", "[{date}] {ip} - OAuth token retrieval failure")
-            error_for(endpoint="auth.login", message="OAuth token retrieval failure.")
-            return redirect(url_for("auth.login"))
-    else:
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+    if request.values.get('error'):
         log("logins", "[{date}] {ip} - Received redirect without OAuth code")
         error_for(
-            endpoint="auth.login", message="Received redirect without OAuth code."
+            endpoint="auth.login", message=str(request.values['error'])
         )
         return redirect(url_for("auth.login"))
+    else:
+        discord = make_session(state=session.get('oauth2_state'))
+        token = discord.fetch_token(
+            "https://discordapp.com/api/oauth2/token",
+            client_secret="kHLKALybV7qJmlYCsvAr5URdFl1jh4F2",
+            authorization_response=request.url)
 
+        discord = make_session(token=token)
+        discord_user = discord.get("https://discordapp.com/api/users/@me").json()
+        guilds = discord.get("https://discordapp.com/api/users/@me/guilds").json()
 
+        user = Users.query.filter_by(email=discord_user['email']).first()
+        if user is None:
+            user = Users(
+                name=discord_user['username'],
+                email=discord_user['email'],
+                oauth_id=discord_user['id'],
+            )
+            db.session.add(user)
+            db.session.commit()
+        login_user(user)
+        return redirect(url_for("challenges.listing"))
+        
 @auth.route("/logout")
 def logout():
     if current_user.authed():
